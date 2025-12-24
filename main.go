@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"os"
@@ -21,6 +22,11 @@ func main() {
 	switch command {
 	case "init":
 		initVit()
+	case "hash-object":
+		if len(os.Args) < 3 {
+			log.Fatal("Usage: vit hash-object <file>")
+		}
+		hashObject(os.Args[2])
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -46,4 +52,20 @@ func initVit() {
 		log.Fatalf("Failed to create HEAD file: %v", err)
 	}
 
+}
+
+func hashObject(filePath string) {
+	
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Fatalf("Failed to read file %s: %v", filePath, err)
+	}
+
+	header := fmt.Sprintf("blob %d\x00", len(content))
+
+	store := append([]byte(header), content...)
+
+	hash := sha1.Sum(store)
+
+	fmt.Printf("%x\n", hash)
 }
