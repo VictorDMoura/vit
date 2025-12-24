@@ -1,48 +1,49 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 )
 
-const path string = "./.vit"
+const vitDir = ".vit"
 
 func main() {
 
-	arguments := os.Args[1:]
-
-	switch arguments[1] {
-	case "init":
-		err := os.MkdirAll(path, 0755)
-		if err != nil {
-			log.Fatalf("Failed to initialize vit project: %v", err)
-		}
-		err = os.MkdirAll(path+"/objects", 0755)
-		if err != nil {
-			log.Fatalf("Failed to initialize vit project: %v", err)
-		}
-		err = os.MkdirAll(path+"/refs", 0755)
-		if err != nil {
-			log.Fatalf("Failed to initialize vit project: %v", err)
-		}
-
-		arquivo, err := os.Create(path + "/HEAD")
-		if err != nil {
-			log.Fatalf("Failed to create HEAD file: %v", err)
-		}
-		defer arquivo.Close()
-		arquivo.WriteString("ref: refs/heads/main\n")
-	case "add":
-		log.Println("Adding file to vit project...")
-		
-	case "commit":
-		log.Println("Committing changes to vit project...")
-	
-	case "log":
-		log.Println("Displaying vit project log...")
-
-	default:
-		log.Fatalf("Invalid subcommand: %s", arguments[1])
-		return
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: vit <command> [<args>]")
+		os.Exit(1)
 	}
+
+	command := os.Args[1]
+
+	switch command {
+	case "init":
+		initVit()
+	default:
+		log.Fatalf("Unknown command: %s", command)
+	}
+}
+
+
+func initVit() {
+	
+	dirs := []string{
+		filepath.Join(vitDir, "objects"),
+		filepath.Join(vitDir, "refs"),
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Fatalf("Failed to create directory %s: %v", dir, err)
+		}
+	}
+
+	headPath := filepath.Join(vitDir, "HEAD")
+	headContent := []byte("ref: refs/heads/main\n")
+	if err := os.WriteFile(headPath, headContent, 0644); err != nil {
+		log.Fatalf("Failed to create HEAD file: %v", err)
+	}
+
 }
