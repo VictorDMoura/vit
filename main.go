@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -28,6 +30,11 @@ func main() {
 			log.Fatal("Usage: vit hash-object <file>")
 		}
 		hashObject(os.Args[2], true)
+	case "cat-file":
+		if len(os.Args) < 4 || os.Args[2] != "-p" {
+			log.Fatal("Usage: vit cat-file -p <object_hash>")
+		}
+		catFile(os.Args[3])
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -99,4 +106,40 @@ func hashObject(filePath string, write bool) {
 	}
 
 	fmt.Println(hasString)
+}
+
+func catFile(hash string) {
+	if len(hash) < 2 {
+		log.Fatalf("Invalid hash: %s", hash)
+	}
+
+	dirName := hash[:2]
+	fileName := hash[2:]
+	path := filepath.Join(vitDir, "objects", dirName, fileName)
+
+	file, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("Failed to open object file: %v", err)
+	}
+	defer file.Close()
+
+	zr, err := zlib.NewReader(file)
+	if err != nil {
+		log.Fatalf("Failed to create zlib reader: %v", err)
+	}
+	defer zr.Close()
+
+	content, err := io.ReadAll(zr)
+	if err != nil {
+		log.Fatalf("Failed to read compressed object data: %v", err)
+	}
+
+	parts := bytes.SplitN(content, []byte{0}, 2)
+	
+	if len(parts) < 2 {
+		log.Fatalf("Invalid object format")
+	}
+
+	fmt.Println(string(parts[1]))
+
 }
