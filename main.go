@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const vitDir = ".vit"
@@ -31,10 +32,12 @@ func main() {
 		}
 		hashObject(os.Args[2], true)
 	case "cat-file":
-		if len(os.Args) < 4 || os.Args[2] != "-p" {
-			log.Fatal("Usage: vit cat-file -p <object_hash>")
+		if len(os.Args) < 4 {
+			log.Fatal("Usage: vit cat-file <-p|-t|-s> <object_hash>")
 		}
-		catFile(os.Args[3])
+		flag := os.Args[2]
+		hash := os.Args[3]
+		catFile(hash, flag)
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -108,7 +111,7 @@ func hashObject(filePath string, write bool) {
 	fmt.Println(hasString)
 }
 
-func catFile(hash string) {
+func catFile(hash string, flag string) {
 	if len(hash) < 2 {
 		log.Fatalf("Invalid hash: %s", hash)
 	}
@@ -140,6 +143,23 @@ func catFile(hash string) {
 		log.Fatalf("Invalid object format")
 	}
 
-	fmt.Println(string(parts[1]))
+	headerStr := string(parts[0])
+	headerParts := strings.Split(headerStr, " ")
+
+	if len(headerParts) < 2 {
+		log.Fatalf("Invalid object header")
+	}
+
+	objType := headerParts[0]
+	objSize := headerParts[1]
+
+	switch flag {
+	case "-t":
+		fmt.Println(objType)
+	case "-s":
+		fmt.Println(objSize)
+	case "-p":
+		fmt.Print(string(parts[1]))
+	}
 
 }
