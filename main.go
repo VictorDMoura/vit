@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/zlib"
 	"crypto/sha1"
 	"fmt"
 	"log"
@@ -26,7 +27,7 @@ func main() {
 		if len(os.Args) < 3 {
 			log.Fatal("Usage: vit hash-object <file>")
 		}
-		hashObject(os.Args[2])
+		hashObject(os.Args[2], true)
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -54,7 +55,7 @@ func initVit() {
 
 }
 
-func hashObject(filePath string) {
+func hashObject(filePath string, write bool) {
 	
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -66,6 +67,36 @@ func hashObject(filePath string) {
 	store := append([]byte(header), content...)
 
 	hash := sha1.Sum(store)
+	hasString := fmt.Sprintf("%x", hash)
 
-	fmt.Printf("%x\n", hash)
+	if !write {
+		fmt.Println(hasString)
+		return
+	}
+
+	dirName := hasString[:2]
+	fileName := hasString[2:]
+	
+	objectDir := filepath.Join(vitDir, "objects", dirName)
+	objectPath := filepath.Join(objectDir, fileName)
+
+	if err := os.MkdirAll(objectDir, 0755); err != nil {
+		log.Fatalf("Failed to create object directory %s: %v", objectDir, err)
+	}
+
+	file, err := os.Create(objectPath)
+	if err != nil {
+		log.Fatalf("Failed to create object file: %v", err)
+	}
+	defer file.Close()
+
+	zw := zlib.NewWriter(file)
+	if _, err := zw.Write(store); err != nil {
+		log.Fatalf("Failed to write compressed object data: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		log.Fatalf("Failed to close zlib writer: %v", err)
+	}
+
+	fmt.Println(hasString)
 }
