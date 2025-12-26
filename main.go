@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -30,7 +31,7 @@ func main() {
 		if len(os.Args) < 3 {
 			log.Fatal("Usage: vit hash-object <file>")
 		}
-		hashObject(os.Args[2], true)
+		hashObject(os.Args[2])
 	case "cat-file":
 		if len(os.Args) < 4 {
 			log.Fatal("Usage: vit cat-file <-p|-t|-s> <object_hash>")
@@ -38,6 +39,8 @@ func main() {
 		flag := os.Args[2]
 		hash := os.Args[3]
 		catFile(hash, flag)
+	case "write-tree":
+		writeTree()
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -65,50 +68,14 @@ func initVit() {
 
 }
 
-func hashObject(filePath string, write bool) {
+func hashObject(filePath string) ([]byte, error){
 	
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Fatalf("Failed to read file %s: %v", filePath, err)
 	}
 
-	header := fmt.Sprintf("blob %d\x00", len(content))
-
-	store := append([]byte(header), content...)
-
-	hash := sha1.Sum(store)
-	hasString := fmt.Sprintf("%x", hash)
-
-	if !write {
-		fmt.Println(hasString)
-		return
-	}
-
-	dirName := hasString[:2]
-	fileName := hasString[2:]
-	
-	objectDir := filepath.Join(vitDir, "objects", dirName)
-	objectPath := filepath.Join(objectDir, fileName)
-
-	if err := os.MkdirAll(objectDir, 0755); err != nil {
-		log.Fatalf("Failed to create object directory %s: %v", objectDir, err)
-	}
-
-	file, err := os.Create(objectPath)
-	if err != nil {
-		log.Fatalf("Failed to create object file: %v", err)
-	}
-	defer file.Close()
-
-	zw := zlib.NewWriter(file)
-	if _, err := zw.Write(store); err != nil {
-		log.Fatalf("Failed to write compressed object data: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		log.Fatalf("Failed to close zlib writer: %v", err)
-	}
-
-	fmt.Println(hasString)
+	return saveObject("blob", content), nil
 }
 
 func catFile(hash string, flag string) {
@@ -162,4 +129,76 @@ func catFile(hash string, flag string) {
 		fmt.Print(string(parts[1]))
 	}
 
+}
+
+func saveObject(objType string, data []byte) []byte {
+
+	header := fmt.Sprintf("%s %d\x00", objType, len(data))
+	store := append([]byte(header), data...)
+
+	hash := sha1.Sum(store)
+	hashString := fmt.Sprintf("%x", hash)
+
+	dirName := hashString[:2]
+	fileName := hashString[2:]
+	objectDir := filepath.Join(vitDir, "objects", dirName)
+	objectPath := filepath.Join(objectDir, fileName)
+
+	if err := os.MkdirAll(objectDir, 0755); err != nil {
+		log.Fatalf("Failed to create object directory %s: %v", objectDir, err)
+	}
+	
+	file, err := os.Create(objectPath)
+	if err != nil {
+		log.Fatalf("Failed to create object file: %v", err)
+	}
+	defer file.Close()
+
+	zw := zlib.NewWriter(file)
+	if _, err := zw.Write(store); err != nil {
+		log.Fatalf("Failed to write compressed object data: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		log.Fatalf("Failed to close zlib writer: %v", err)
+	}
+
+	return hash[:]
+
+}
+
+func writeTree() {
+	files, err := os.ReadDir(".")
+	if err != nil {
+		log.Fatalf("Failed to read current directory: %v", err)
+	}
+
+	type TreeEntry struct {
+		Name string
+		Hash []byte
+	}
+	var entries []TreeEntry
+
+	for _, file := range files {
+		if file.Name() == vitDir || file.Name() == ".git" || file.IsDir() {
+			continue
+		}
+		hash, err := hashObject(file.Name())
+		if err != nil {
+			log.Fatalf("Failed to hash object %s: %v", file.Name(), err)
+		}
+		entries = append(entries, TreeEntry{Name: file.Name(), Hash: hash})
+	}
+
+	sort.Slice(entries, func(i, j int) bool{
+		return entries[i].Name < entries[j].Name
+	})
+
+
+	var buf bytes.Buffer
+	for _, e := range entries {
+		fmt.Fprintf(&buf, "100644 %s\x00", e.Name)
+		buf.Write(e.Hash)
+	}
+	treeHash := saveObject("tree", buf.Bytes())
+	fmt.Printf("%x\n", treeHash)
 }
