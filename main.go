@@ -29,10 +29,11 @@ func main() {
 	case "init":
 		initVit()
 	case "hash-object":
-		if len(os.Args) < 3 {
-			log.Fatal("Usage: vit hash-object <file>")
-		}
-		hashObject(os.Args[2])
+		hash, err := hashObject(os.Args[2]) 
+   		if err != nil {
+        	log.Fatal(err)
+    	}
+    	fmt.Printf("%x\n", hash)
 	case "cat-file":
 		if len(os.Args) < 4 {
 			log.Fatal("Usage: vit cat-file <-p|-t|-s> <object_hash>")
@@ -93,6 +94,7 @@ func hashObject(filePath string) ([]byte, error){
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Fatalf("Failed to read file %s: %v", filePath, err)
+		return nil, err
 	}
 
 	return saveObject("blob", content), nil
