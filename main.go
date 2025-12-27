@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const vitDir = ".vit"
@@ -41,6 +42,25 @@ func main() {
 		catFile(hash, flag)
 	case "write-tree":
 		writeTree()
+	case "commit-tree":
+		if len(os.Args) < 5 {
+			log.Fatal("Usage: vit commit-tree <tree_hash> -m <message> [-p <parent_hash>]")
+		}
+
+		treeHash := os.Args[2]
+		flag := os.Args[3]
+		message := os.Args[4]
+		parentHash := ""
+
+		if flag != "-m" {
+			log.Fatal("Expected -m flag for commit message")
+		}
+
+		if len(os.Args) >= 7 && os.Args[5] == "-p" {
+			parentHash = os.Args[6]
+		}
+		commitTree(treeHash, message, parentHash)
+		
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -201,4 +221,24 @@ func writeTree() {
 	}
 	treeHash := saveObject("tree", buf.Bytes())
 	fmt.Printf("%x\n", treeHash)
+}
+
+func commitTree(treeHash, message, parentHash string) {
+	timestamp := time.Now().Unix()
+	timezone := "-0300"
+	author := fmt.Sprintf("Victor <victor@vit.com> %d %s", timestamp, timezone)
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "tree %s\n", treeHash)
+
+	if parentHash != "" {
+		fmt.Fprintf(&buf, "parent %s\n", parentHash)
+	}
+	
+	fmt.Fprintf(&buf, "author %s\n", author)
+	fmt.Fprintf(&buf, "committer %s\n", author)
+	fmt.Fprintf(&buf, "\n%s\n", message)
+
+	commitHash := saveObject("commit", buf.Bytes())
+	fmt.Printf("%x\n", commitHash)
 }
