@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
@@ -15,6 +16,7 @@ import (
 )
 
 const vitDir = ".vit"
+const indexFile = "index"
 
 func main() {
 
@@ -41,6 +43,11 @@ func main() {
 		flag := os.Args[2]
 		hash := os.Args[3]
 		catFile(hash, flag)
+	case "add":
+		if len(os.Args) < 3 {
+			log.Fatal("Usage: vit add <file_path>")
+		}
+		addFile(os.Args[2])
 	case "write-tree":
 		writeTree()
 	case "commit-tree":
@@ -61,7 +68,12 @@ func main() {
 			parentHash = os.Args[6]
 		}
 		commitTree(treeHash, message, parentHash)
-		
+	case "update-ref":
+		if len(os.Args) < 4 {
+			log.Fatal("Usage: vit update-ref <ref_name> <commit_hash>")
+		}
+		updateRef(os.Args[2], os.Args[3])
+
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -98,6 +110,64 @@ func hashObject(filePath string) ([]byte, error){
 	}
 
 	return saveObject("blob", content), nil
+}
+
+func loadIndex() map[string]string {
+	indexPath := filepath.Join(vitDir, indexFile)
+	indexMap := make(map[string]string)
+
+	file, err := os.Open(indexPath)
+	if os.IsNotExist(err) {
+		return indexMap
+	}
+	if err != nil {
+		log.Fatalf("Failed to open index file: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, " ")
+		if len(parts) >= 2 {
+			indexMap[parts[1]] = parts[0]
+		}
+	}
+	return indexMap
+}
+
+func saveIndex(indexMap map[string]string) {
+	indexPath := filepath.Join(vitDir, indexFile)
+	file, err := os.Create(indexPath)
+	if err != nil {
+		log.Fatalf("Failed to write index: %v", err)
+	}
+	defer file.Close()
+
+	var names []string
+	for name := range indexMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		line := fmt.Sprintf("%s %s\n", indexMap[name], name)
+		file.WriteString(line)
+	}
+}
+
+func addFile(filePath string) {
+	hash, err := hashObject(filePath)
+	if err != nil {
+		log.Fatalf("Failed to add file: %v", err)
+	}
+	hashHex := fmt.Sprintf("%x", hash)
+
+	indexMap := loadIndex()
+	indexMap[filePath] = hashHex
+	saveIndex(indexMap)
+
+	fmt.Printf("Added %s to staging area\n", filePath)
 }
 
 func catFile(hash string, flag string) {
@@ -189,26 +259,20 @@ func saveObject(objType string, data []byte) []byte {
 }
 
 func writeTree() {
-	files, err := os.ReadDir(".")
-	if err != nil {
-		log.Fatalf("Failed to read current directory: %v", err)
+	indexMap := loadIndex()
+
+	if len(indexMap) == 0 {
+		log.Fatal("Nothing to write-tree (staging area is empty)")
 	}
 
 	type TreeEntry struct {
 		Name string
-		Hash []byte
+		HashHex string
 	}
 	var entries []TreeEntry
 
-	for _, file := range files {
-		if file.Name() == vitDir || file.Name() == ".git" || file.IsDir() {
-			continue
-		}
-		hash, err := hashObject(file.Name())
-		if err != nil {
-			log.Fatalf("Failed to hash object %s: %v", file.Name(), err)
-		}
-		entries = append(entries, TreeEntry{Name: file.Name(), Hash: hash})
+	for name, hashHex := range indexMap {
+		entries = append(entries, TreeEntry{Name: name, HashHex: hashHex})
 	}
 
 	sort.Slice(entries, func(i, j int) bool{
@@ -218,8 +282,11 @@ func writeTree() {
 
 	var buf bytes.Buffer
 	for _, e := range entries {
+		var hashBytes []byte
+		fmt.Sscanf(e.HashHex, "%x", &hashBytes)
+
 		fmt.Fprintf(&buf, "100644 %s\x00", e.Name)
-		buf.Write(e.Hash)
+		buf.Write(hashBytes)
 	}
 	treeHash := saveObject("tree", buf.Bytes())
 	fmt.Printf("%x\n", treeHash)
@@ -243,4 +310,20 @@ func commitTree(treeHash, message, parentHash string) {
 
 	commitHash := saveObject("commit", buf.Bytes())
 	fmt.Printf("%x\n", commitHash)
+}
+
+func updateRef(refName, commitHash string) {
+	if len(commitHash) != 40 {
+		log.Fatalf("Invalid commit hash length: %s", commitHash)
+	}
+	path := filepath.Join(vitDir, refName)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Fatalf("Failed to create ref directory: %v", err)
+	}
+	content := []byte(commitHash + "\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		log.Fatalf("Failed to update ref %s: %v", refName, err)
+	}
+	fmt.Printf("Updated %s to %s\n", refName, commitHash)
 }
