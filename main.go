@@ -11,12 +11,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const vitDir = ".vit"
 const indexFile = "index"
+
+type Commit struct {
+	Hash    string
+	Author  string
+	Date    string
+	Message string
+	Parent  string
+}
 
 func main() {
 
@@ -73,7 +82,12 @@ func main() {
 			log.Fatal("Usage: vit update-ref <ref_name> <commit_hash>")
 		}
 		updateRef(os.Args[2], os.Args[3])
-
+	case "log":
+		ref := "HEAD"
+		if len(os.Args) >= 3 {
+			ref = os.Args[2]
+		}
+		logGraph(ref)
 	default:
 		log.Fatalf("Unknown command: %s", command)
 	}
@@ -171,56 +185,84 @@ func addFile(filePath string) {
 }
 
 func catFile(hash string, flag string) {
-	if len(hash) < 2 {
-		log.Fatalf("Invalid hash: %s", hash)
+
+	objType, content, err := readObject(hash)
+	if err != nil {
+		log.Fatal(err)
 	}
 
+	switch flag {
+	case "-t":
+		fmt.Println(objType)
+	case "-s":
+		fmt.Println(len(content))
+	case "-p":
+		if objType == "tree" {
+			fmt.Println("Tree object content (binary)")
+		} else {
+			fmt.Print(string(content))
+		}
+	}
+}
+
+func readObject(hash string) (string, []byte, error) {
+	if len(hash) < 2 {
+		return "", nil, fmt.Errorf("invalid hash")
+	}
 	dirName := hash[:2]
 	fileName := hash[2:]
 	path := filepath.Join(vitDir, "objects", dirName, fileName)
 
 	file, err := os.Open(path)
 	if err != nil {
-		log.Fatalf("Failed to open object file: %v", err)
+		return "", nil, fmt.Errorf("object not found %s", hash)
 	}
 	defer file.Close()
 
 	zr, err := zlib.NewReader(file)
 	if err != nil {
-		log.Fatalf("Failed to create zlib reader: %v", err)
+		return "", nil, err
 	}
 	defer zr.Close()
 
-	content, err := io.ReadAll(zr)
+	raw, err := io.ReadAll(zr)
 	if err != nil {
-		log.Fatalf("Failed to read compressed object data: %v", err)
+		return "", nil, err
 	}
 
-	parts := bytes.SplitN(content, []byte{0}, 2)
-	
+	parts := bytes.SplitN(raw, []byte{0}, 2)
 	if len(parts) < 2 {
-		log.Fatalf("Invalid object format")
+		return "", nil, fmt.Errorf("corrupted object")
 	}
 
-	headerStr := string(parts[0])
-	headerParts := strings.Split(headerStr, " ")
-
-	if len(headerParts) < 2 {
-		log.Fatalf("Invalid object header")
-	}
-
+	header := string(parts[0])
+	headerParts := strings.Split(header, " ")
 	objType := headerParts[0]
-	objSize := headerParts[1]
 
-	switch flag {
-	case "-t":
-		fmt.Println(objType)
-	case "-s":
-		fmt.Println(objSize)
-	case "-p":
-		fmt.Print(string(parts[1]))
+	return objType, parts[1], nil
+}
+
+func resolveRef(ref string) (string, error) {
+	path := filepath.Join(vitDir, ref)
+	data, err := os.ReadFile(path)
+	
+	if os.IsNotExist(err) {
+		if len(ref) == 40 {
+			return ref, nil
+		}
+		return "", fmt.Errorf("ref not found: %s", ref)
+	}
+	if err != nil {
+		return "", err
 	}
 
+	content := strings.TrimSpace(string(data))
+	
+	if strings.HasPrefix(content, "ref: ") {
+		return resolveRef(strings.TrimPrefix(content, "ref: "))
+	}
+
+	return content, nil
 }
 
 func saveObject(objType string, data []byte) []byte {
@@ -326,4 +368,66 @@ func updateRef(refName, commitHash string) {
 		log.Fatalf("Failed to update ref %s: %v", refName, err)
 	}
 	fmt.Printf("Updated %s to %s\n", refName, commitHash)
+}
+
+func parseCommit(hash string) (*Commit, error) {
+	objType, content, err := readObject(hash)
+	if err != nil {
+		return nil, err
+	}
+	if objType != "commit" {
+		return nil, fmt.Errorf("object %s is not a commit", hash)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	commit := &Commit{Hash: hash}
+	
+	for i, line := range lines {
+		// Linha em branco separa header do body (mensagem)
+		if line == "" {
+			commit.Message = strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+			break
+		}
+
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		
+		key, value := parts[0], parts[1]
+		switch key {
+		case "parent":
+			commit.Parent = value
+		case "author":
+			fields := strings.Fields(value)
+			if len(fields) > 2 {
+				ts, _ := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+				commit.Date = time.Unix(ts, 0).Format(time.RFC1123)
+				commit.Author = strings.Join(fields[:len(fields)-2], " ")
+			}
+		}
+	}
+	return commit, nil
+}
+
+func logGraph(ref string) {
+	currentHash, err := resolveRef(ref)
+	if err != nil {
+		log.Fatalf("Failed to resolve ref %s: %v", ref, err)
+	}
+
+	for currentHash != "" {
+		commit, err := parseCommit(currentHash)
+		if err != nil {
+			log.Fatalf("Error parsing commit %s: %v", currentHash, err)
+		}
+
+	
+		fmt.Printf("\033[33mcommit %s\033[0m\n", commit.Hash) // Amarelo
+		fmt.Printf("Author: %s\n", commit.Author)
+		fmt.Printf("Date:   %s\n", commit.Date)
+		fmt.Printf("\n    %s\n\n", commit.Message)
+
+		currentHash = commit.Parent
+	}
 }
